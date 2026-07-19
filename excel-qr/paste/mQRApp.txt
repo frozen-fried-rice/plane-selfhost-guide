@@ -41,7 +41,7 @@ Public Sub QR_Setup()
     ws.Range("A7").Font.Bold = True
     ws.Range("A8").Value = "CSVファイルのフルパス"
     ws.Range("B8").Value = "C:\data\qr_list.csv"
-    ws.Range("A9").Value = "QR化する列番号（1始まり）"
+    ws.Range("A9").Value = "QR化する列（列番号 or 列名。例: 67 または BO）"
     ws.Range("B9").Value = 1
     ws.Range("A10").Value = "見出しに使う列番号（0=なし）"
     ws.Range("B10").Value = 0
@@ -105,7 +105,12 @@ Public Sub QR_MakeFromCSV()
     Dim path As String:    path = Trim$(CStr(ws.Range("B8").Value))
     If Left$(path, 1) = Chr$(34) Then path = Mid$(path, 2)          ' 前後の " を除去（Windowsの「パスのコピー」対策）
     If Right$(path, 1) = Chr$(34) Then path = Left$(path, Len(path) - 1)
-    Dim col As Long:       col = ReadLong(ws.Range("B9").Value, 1)
+    Dim col As Long                                                ' QR化する列（番号 or 列名 どちらでも可）
+    If IsNumeric(ws.Range("B9").Value) Then
+        col = CLng(ws.Range("B9").Value)
+    Else
+        col = ws.Columns(Trim$(CStr(ws.Range("B9").Value))).Column ' 例: "BO" -> 67
+    End If
     Dim labelCol As Long:  labelCol = ReadLong(ws.Range("B10").Value, 0)
     Dim skipRows As Long: skipRows = ReadLong(ws.Range("B11").Value, 0)
     Dim enc As String:     enc = CStr(ws.Range("B12").Value)
