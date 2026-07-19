@@ -223,6 +223,121 @@ eh2:
     MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeFromColumn"
 End Sub
 
+'============================ 印刷用グリッド出力 ==============================
+' 指定列（既定 BO）の全データを、QRが切れない「均一グリッド」で新シート「QR印刷」に
+' 配置し、改ページを必ずマス目の境目に入れます。横は1ページ幅に収め、縦は用紙に
+' 入る段数を自動計算。データが表示されているシートで Alt+F8 → QR_MakeGridForPrint。
+Public Sub QR_MakeGridForPrint()
+    ' === 設定（ここだけ変えればOK） ===
+    Const COL_LETTER As String = "BO"   ' 元データの列
+    Const START_ROW As Long = 2         ' 開始行（BO2 なら 2）
+    Const COLS_PER_ROW As Long = 4      ' 横に並べる数（増やすとQRは小さく＝1ページに多く）
+    Const GAP As Long = 2               ' QR同士のすき間（セル）
+    Const QUIET As Long = 4             ' QRの白余白（モジュール）
+    Const MARGIN_CM As Double = 1#      ' 印刷余白(cm)
+
+    Dim src As Worksheet
+    ' 特定シートに固定するなら次行の ' を外して名前を指定:
+    ' Set src = ThisWorkbook.Worksheets("航空機部品(部品)_20260630")
+    If src Is Nothing Then Set src = ActiveSheet
+
+    Dim ecc As String: ecc = "M"
+    On Error Resume Next
+    ecc = CStr(ThisWorkbook.Worksheets(PANEL_SHEET).Range("B4").Value)
+    On Error GoTo 0
+    If Len(ecc) = 0 Then ecc = "M"
+
+    On Error GoTo eh3
+    Dim colNum As Long: colNum = src.Columns(COL_LETTER).Column
+    Dim lastRow As Long: lastRow = src.Cells(src.Rows.Count, colNum).End(xlUp).Row
+    If lastRow < START_ROW Then MsgBox COL_LETTER & "列にデータがありません。", vbExclamation: Exit Sub
+
+    Application.ScreenUpdating = False
+    Application.StatusBar = "QRコードを生成中..."
+
+    ' 1) 全QR生成＋最大サイズ（均一グリッドにするため）
+    Dim n As Long: n = lastRow - START_ROW + 1
+    Dim mats() As Variant: ReDim mats(1 To n)
+    Dim texts() As String: ReDim texts(1 To n)
+    Dim cnt As Long: cnt = 0
+    Dim maxSize As Long: maxSize = 0
+    Dim r As Long
+    For r = START_ROW To lastRow
+        Dim s As String: s = Trim$(CStr(src.Cells(r, colNum).Value))
+        If Len(s) > 0 Then
+            cnt = cnt + 1
+            mats(cnt) = QR_Generate(s, ecc)
+            texts(cnt) = s
+            Dim sz As Long: sz = UBound(mats(cnt), 1) + 1
+            If sz > maxSize Then maxSize = sz
+        End If
+    Next r
+    If cnt = 0 Then
+        Application.StatusBar = False: Application.ScreenUpdating = True
+        MsgBox "データがありません。", vbExclamation: Exit Sub
+    End If
+
+    ' 2) 均一ブロック寸法（QRは正方形。ラベル1行＋すき間を足す）
+    Dim blockDim As Long: blockDim = maxSize + 2 * QUIET
+    Dim blockCols As Long: blockCols = blockDim + GAP
+    Dim blockRows As Long: blockRows = blockDim + 1 + GAP
+
+    ' 3) グリッド配置
+    Dim outWs As Worksheet: Set outWs = FreshSheet("QR印刷")
+    Dim totalCols As Long: totalCols = COLS_PER_ROW * blockCols
+    Dim k As Long, gx As Long, gy As Long, topRow As Long, leftCol As Long
+    For k = 1 To cnt
+        If k Mod 100 = 0 Then Application.StatusBar = "配置中... " & k & " / " & cnt
+        gx = (k - 1) Mod COLS_PER_ROW
+        gy = (k - 1) \ COLS_PER_ROW
+        topRow = 1 + gy * blockRows
+        leftCol = 1 + gx * blockCols
+        outWs.Cells(topRow, leftCol).Value = texts(k)
+        RenderQRToCells outWs, topRow + 1, leftCol, mats(k), QUIET
+    Next k
+    outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
+
+    ' 4) ページ設定（横は1ページに収める＝横切れ防止）
+    With outWs.PageSetup
+        .Orientation = xlPortrait
+        .Zoom = False
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+        .LeftMargin = Application.CentimetersToPoints(MARGIN_CM)
+        .RightMargin = Application.CentimetersToPoints(MARGIN_CM)
+        .TopMargin = Application.CentimetersToPoints(MARGIN_CM)
+        .BottomMargin = Application.CentimetersToPoints(MARGIN_CM)
+    End With
+
+    ' 5) 縦の改ページを「マス目の境目」に入れる（用紙に入る段数を算出）
+    Dim pw As Double, ph As Double
+    pw = 595.3 - 2 * Application.CentimetersToPoints(MARGIN_CM)   ' A4幅(pt)
+    ph = 841.9 - 2 * Application.CentimetersToPoints(MARGIN_CM)   ' A4高(pt)
+    Dim rowsPerPage As Long
+    rowsPerPage = Int((ph / pw) * COLS_PER_ROW * blockCols / blockRows)
+    If rowsPerPage < 1 Then rowsPerPage = 1
+
+    outWs.ResetAllPageBreaks
+    Dim totalBlockRows As Long: totalBlockRows = (cnt + COLS_PER_ROW - 1) \ COLS_PER_ROW
+    Dim br As Long
+    For br = rowsPerPage To totalBlockRows - 1 Step rowsPerPage
+        outWs.Rows(1 + br * blockRows).PageBreak = xlPageBreakManual
+    Next br
+
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    outWs.Activate: outWs.Range("A1").Select
+    MsgBox cnt & " 件を印刷用グリッドに配置しました。" & vbCrLf & _
+           "（横 " & COLS_PER_ROW & " 列 × 縦 " & rowsPerPage & " 段／ページ）" & vbCrLf & _
+           "［ファイル→印刷］でプレビューを確認してください。どのページでもQRは切れません。" & vbCrLf & _
+           "1つを大きく/小さくしたいときは COLS_PER_ROW を減らす/増やしてください。", vbInformation, "QR印刷"
+    Exit Sub
+eh3:
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeGridForPrint"
+End Sub
+
 '============================ 描画（セル塗り） ================================
 
 ' matrix : QR_Generate の戻り値。matrix(x,y) True=黒。
