@@ -160,6 +160,63 @@ eh:
     MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeFromCSV"
 End Sub
 
+'============================ シートの列から一括生成 ==========================
+' 開いているシートの指定列（既定 BO）を、開始行（既定 2）から下へ空セルまで読み、
+' 各セルの内容をQR化して「QR出力」シートに並べます。CSV不要・パス不要。
+' ※データが表示されているシートを開いた状態で Alt+F8 → QR_MakeFromColumn を実行してください。
+Public Sub QR_MakeFromColumn()
+    ' === 設定（ここだけ変えればOK） ===
+    Const COL_LETTER As String = "BO"   ' QR化したい列
+    Const START_ROW As Long = 2         ' 開始行（BO2 なら 2）
+
+    Dim src As Worksheet
+    ' 特定シートに固定したい場合は次行の ' を外して名前を指定:
+    ' Set src = ThisWorkbook.Worksheets("航空機部品(部品)_20260630")
+    If src Is Nothing Then Set src = ActiveSheet
+
+    Dim ecc As String: ecc = "M"
+    Dim quiet As Long: quiet = 4
+    On Error Resume Next
+    ecc = CStr(ThisWorkbook.Worksheets(PANEL_SHEET).Range("B4").Value)
+    quiet = CLng(ThisWorkbook.Worksheets(PANEL_SHEET).Range("B5").Value)
+    On Error GoTo 0
+    If Len(ecc) = 0 Then ecc = "M"
+    If quiet < 0 Then quiet = 4
+
+    On Error GoTo eh2
+    Dim colNum As Long: colNum = src.Columns(COL_LETTER).Column
+    Dim lastRow As Long: lastRow = src.Cells(src.Rows.Count, colNum).End(xlUp).Row
+    If lastRow < START_ROW Then
+        MsgBox src.Name & " の " & COL_LETTER & "列にデータがありません。" & vbCrLf & _
+               "データが表示されているシートで実行してください。", vbExclamation, "QR_MakeFromColumn"
+        Exit Sub
+    End If
+
+    Dim outWs As Worksheet: Set outWs = FreshSheet("QR出力")
+    Application.ScreenUpdating = False
+    Dim r As Long, outRow As Long, count As Long
+    outRow = 2
+    For r = START_ROW To lastRow
+        Dim content As String: content = Trim$(CStr(src.Cells(r, colNum).Value))
+        If Len(content) > 0 Then
+            outWs.Cells(outRow, 1).Value = content
+            outWs.Cells(outRow, 1).Font.Bold = True
+            Dim m As Variant: m = QR_Generate(content, ecc)
+            Dim size As Long: size = UBound(m, 1) + 1
+            RenderQRToCells outWs, outRow + 1, 1, m, quiet
+            outRow = outRow + 1 + (size + 2 * quiet) + 2
+            count = count + 1
+        End If
+    Next r
+    Application.ScreenUpdating = True
+    outWs.Activate: outWs.Range("A1").Select
+    MsgBox count & " 件のQRコードを生成しました。（シート「QR出力」）", vbInformation, "QR_MakeFromColumn"
+    Exit Sub
+eh2:
+    Application.ScreenUpdating = True
+    MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeFromColumn"
+End Sub
+
 '============================ 描画（セル塗り） ================================
 
 ' matrix : QR_Generate の戻り値。matrix(x,y) True=黒。
