@@ -330,12 +330,13 @@ Public Sub QR_MakeGridFromCSV()
         topRow = 1 + gy * blockRows
         leftCol = 1 + gx * blockCols
         RenderQRToCells outWs, topRow, leftCol, mats(k), QUIET
-        outWs.Cells(topRow + blockDim, leftCol).Value = g1s(k)
-        outWs.Cells(topRow + blockDim + 1, leftCol).Value = g2s(k)
-        outWs.Cells(topRow + blockDim, leftCol).Font.Size = LABEL_FONT
-        outWs.Cells(topRow + blockDim + 1, leftCol).Font.Size = LABEL_FONT
-        outWs.Rows(topRow + blockDim).RowHeight = LABEL_FONT * 1.4
-        outWs.Rows(topRow + blockDim + 1).RowHeight = LABEL_FONT * 1.4
+        Dim lr As Long: lr = topRow + (UBound(mats(k), 1) + 1) + QUIET + 1   ' ラベル行＝そのQRの下（末尾の +1 が隙間。増やすと広く）
+        outWs.Cells(lr, leftCol).Value = g1s(k)
+        outWs.Cells(lr + 1, leftCol).Value = g2s(k)
+        outWs.Cells(lr, leftCol).Font.Size = LABEL_FONT
+        outWs.Cells(lr + 1, leftCol).Font.Size = LABEL_FONT
+        outWs.Rows(lr).RowHeight = LABEL_FONT * 1.4
+        outWs.Rows(lr + 1).RowHeight = LABEL_FONT * 1.4
     Next k
     outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
 
