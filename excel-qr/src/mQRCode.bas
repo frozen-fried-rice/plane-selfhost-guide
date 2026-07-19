@@ -434,7 +434,7 @@ Private Function PenaltyScore(mods() As Boolean, ByVal size As Long) As Long
         For x = 0 To size - 1
             If mods(x, y) = rc Then
                 rn = rn + 1
-                If rn = 5 Then result = result + N1 ElseIf rn > 5 Then result = result + 1
+                If rn >= 5 Then result = result + IIf(rn = 5, N1, 1)
             Else
                 FinderAddHistory rn, rh, size
                 If Not rc Then result = result + FinderCount(rh) * N3
@@ -452,7 +452,7 @@ Private Function PenaltyScore(mods() As Boolean, ByVal size As Long) As Long
         For y = 0 To size - 1
             If mods(x, y) = rc2 Then
                 rn2 = rn2 + 1
-                If rn2 = 5 Then result = result + N1 ElseIf rn2 > 5 Then result = result + 1
+                If rn2 >= 5 Then result = result + IIf(rn2 = 5, N1, 1)
             Else
                 FinderAddHistory rn2, rh, size
                 If Not rc2 Then result = result + FinderCount(rh) * N3
