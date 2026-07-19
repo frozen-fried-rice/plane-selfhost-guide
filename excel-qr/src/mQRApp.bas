@@ -103,7 +103,9 @@ Public Sub QR_MakeFromCSV()
     On Error GoTo 0
     If ws Is Nothing Then MsgBox "先に QR_Setup を実行してください。", vbExclamation: Exit Sub
 
-    Dim path As String:    path = CStr(ws.Range("B8").Value)
+    Dim path As String:    path = Trim$(CStr(ws.Range("B8").Value))
+    If Left$(path, 1) = Chr$(34) Then path = Mid$(path, 2)          ' 前後の " を除去（Windowsの「パスのコピー」対策）
+    If Right$(path, 1) = Chr$(34) Then path = Left$(path, Len(path) - 1)
     Dim col As Long:       col = ReadLong(ws.Range("B9").Value, 1)
     Dim labelCol As Long:  labelCol = ReadLong(ws.Range("B10").Value, 0)
     Dim skipRows As Long: skipRows = ReadLong(ws.Range("B11").Value, 0)
@@ -111,7 +113,11 @@ Public Sub QR_MakeFromCSV()
     Dim ecc As String:     ecc = CStr(ws.Range("B4").Value)
     Dim quiet As Long:     quiet = ReadLong(ws.Range("B5").Value, 4)
 
-    If Len(Dir$(path)) = 0 Then MsgBox "CSVファイルが見つかりません:" & vbCrLf & path, vbExclamation: Exit Sub
+    Dim fileOK As Boolean
+    On Error Resume Next
+    fileOK = (Len(Dir$(path)) > 0)                                  ' 不正なパスでも52で落ちないように保護
+    On Error GoTo 0
+    If Not fileOK Then MsgBox "CSVファイルが見つかりません（パス・ファイル名・全角文字を確認）:" & vbCrLf & path, vbExclamation: Exit Sub
 
     On Error GoTo eh
     Dim lines() As String, nLines As Long
