@@ -1,0 +1,353 @@
+Attribute VB_Name = "mQRApp"
+'==============================================================================
+' mQRApp  ---  QRコード発行アプリの操作層（UI・描画・CSV読込）
+'------------------------------------------------------------------------------
+'  mQRCode（純VBAエンジン）を使い、ワークシート上にQRコードをセル塗りで描画します。
+'  画像オブジェクトや外部部品を一切使わないため、非常に軽く・印刷にも強い作りです。
+'
+'  ■ よく使うマクロ（Alt+F8 から実行 / ボタンから実行）
+'      QR_Setup         … 「QRツール」操作シートとボタンを自動生成（最初に1回）
+'      QR_MakeSingle    … パネルの内容を1件だけQR化して「QRコード」シートに表示
+'      QR_MakeFromCSV   … CSVファイルを読み込み「QR出力」シートに一括生成
+'
+'  ■ プログラムから直接呼ぶ例（カスタマイズ向け）
+'      Dim m As Variant
+'      m = QR_Generate("https://example.com", "M")
+'      RenderQRToCells ActiveSheet, 2, 2, m, 4      ' 行2・列2起点、余白4で描画
+'==============================================================================
+Option Explicit
+
+Private Const PANEL_SHEET As String = "QRツール"
+
+'============================ セットアップ ====================================
+
+Public Sub QR_Setup()
+    Dim ws As Worksheet
+    Set ws = GetOrAddSheet(PANEL_SHEET)
+    ws.Cells.Clear
+    DeleteButtons ws
+
+    ws.Range("A1").Value = "■ QRコード発行ツール（スタンドアロン／外部ライブラリ不要）"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A1").Font.Size = 14
+
+    ws.Range("A3").Value = "内容（URL・テキスト）"
+    ws.Range("B3").Value = "https://example.com"
+    ws.Range("A4").Value = "誤り訂正レベル（L / M / Q / H）"
+    ws.Range("B4").Value = "M"
+    ws.Range("A5").Value = "余白（モジュール数, 推奨4）"
+    ws.Range("B5").Value = 4
+
+    ws.Range("A7").Value = "── CSV一括発行 ──"
+    ws.Range("A7").Font.Bold = True
+    ws.Range("A8").Value = "CSVファイルのフルパス"
+    ws.Range("B8").Value = "C:\data\qr_list.csv"
+    ws.Range("A9").Value = "QR化する列番号（1始まり）"
+    ws.Range("B9").Value = 1
+    ws.Range("A10").Value = "見出しに使う列番号（0=なし）"
+    ws.Range("B10").Value = 0
+    ws.Range("A11").Value = "先頭行を見出しとして飛ばす（1=はい, 0=いいえ）"
+    ws.Range("B11").Value = 1
+    ws.Range("A12").Value = "文字コード（UTF-8 / ShiftJIS）"
+    ws.Range("B12").Value = "UTF-8"
+
+    ws.Range("A3:A5,A8:A12").Font.Bold = True
+    ws.Columns("A").ColumnWidth = 34
+    ws.Columns("B").ColumnWidth = 44
+    ws.Range("B3,B4,B5,B8,B9,B10,B11,B12").Interior.Color = RGB(255, 255, 204)
+
+    AddButton ws, "QRコード生成", "QR_MakeSingle", ws.Range("D3"), 150, 44
+    AddButton ws, "CSVから一括生成", "QR_MakeFromCSV", ws.Range("D8"), 150, 44
+
+    ws.Range("A14").Value = "使い方: B3に内容を入れて［QRコード生成］。CSVはパス等を設定して［CSVから一括生成］。"
+    ws.Activate
+    ws.Range("B3").Select
+    MsgBox "準備完了です。" & vbCrLf & _
+           "・単票: B3 に内容を入れて［QRコード生成］" & vbCrLf & _
+           "・一括: B8〜B12 を設定して［CSVから一括生成］", vbInformation, "QRツール"
+End Sub
+
+'============================ 単票生成 ========================================
+
+Public Sub QR_MakeSingle()
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(PANEL_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then MsgBox "先に QR_Setup を実行してください。", vbExclamation: Exit Sub
+
+    Dim text As String: text = CStr(ws.Range("B3").Value)
+    Dim ecc As String:  ecc = CStr(ws.Range("B4").Value)
+    Dim quiet As Long:  quiet = ReadLong(ws.Range("B5").Value, 4)
+    If Len(text) = 0 Then MsgBox "内容（B3）を入力してください。", vbExclamation: Exit Sub
+
+    On Error GoTo eh
+    Dim m As Variant: m = QR_Generate(text, ecc)
+    Dim outWs As Worksheet: Set outWs = FreshSheet("QRコード")
+    outWs.Range("A1").Value = "内容: " & text
+    outWs.Range("A1").Font.Bold = True
+    RenderQRToCells outWs, 3, 1, m, quiet
+    outWs.Activate
+    outWs.Range("A1").Select
+    Exit Sub
+eh:
+    MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeSingle"
+End Sub
+
+'============================ CSV一括生成 ====================================
+
+Public Sub QR_MakeFromCSV()
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(PANEL_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then MsgBox "先に QR_Setup を実行してください。", vbExclamation: Exit Sub
+
+    Dim path As String:    path = CStr(ws.Range("B8").Value)
+    Dim col As Long:       col = ReadLong(ws.Range("B9").Value, 1)
+    Dim labelCol As Long:  labelCol = ReadLong(ws.Range("B10").Value, 0)
+    Dim skipHead As Boolean: skipHead = (ReadLong(ws.Range("B11").Value, 1) = 1)
+    Dim enc As String:     enc = CStr(ws.Range("B12").Value)
+    Dim ecc As String:     ecc = CStr(ws.Range("B4").Value)
+    Dim quiet As Long:     quiet = ReadLong(ws.Range("B5").Value, 4)
+
+    If Len(Dir$(path)) = 0 Then MsgBox "CSVファイルが見つかりません:" & vbCrLf & path, vbExclamation: Exit Sub
+
+    On Error GoTo eh
+    Dim lines() As String, nLines As Long
+    nLines = ReadAllLines(path, enc, lines)
+    If nLines = 0 Then MsgBox "CSVが空です。", vbExclamation: Exit Sub
+
+    Dim outWs As Worksheet: Set outWs = FreshSheet("QR出力")
+    Application.ScreenUpdating = False
+
+    Dim outRow As Long: outRow = 2
+    Dim i As Long, startI As Long, count As Long
+    startI = 0: If skipHead Then startI = 1
+    For i = startI To nLines - 1
+        If Len(Trim$(lines(i))) > 0 Then
+            Dim fields() As String
+            ParseCSVLine lines(i), fields
+            Dim content As String: content = ""
+            If col - 1 <= UBound(fields) Then content = fields(col - 1)
+            If Len(content) > 0 Then
+                Dim label As String: label = ""
+                If labelCol >= 1 Then
+                    If labelCol - 1 <= UBound(fields) Then label = fields(labelCol - 1)
+                End If
+                outWs.Cells(outRow, 1).Value = IIf(Len(label) > 0, label, content)
+                outWs.Cells(outRow, 1).Font.Bold = True
+                Dim m As Variant: m = QR_Generate(content, ecc)
+                Dim size As Long: size = UBound(m, 1) + 1
+                RenderQRToCells outWs, outRow + 1, 1, m, quiet
+                outRow = outRow + 1 + (size + 2 * quiet) + 2   ' 次のQRとの間隔
+                count = count + 1
+            End If
+        End If
+    Next i
+
+    Application.ScreenUpdating = True
+    outWs.Activate: outWs.Range("A1").Select
+    MsgBox count & " 件のQRコードを生成しました。（シート「QR出力」）", vbInformation, "QR_MakeFromCSV"
+    Exit Sub
+eh:
+    Application.ScreenUpdating = True
+    MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeFromCSV"
+End Sub
+
+'============================ 描画（セル塗り） ================================
+
+' matrix : QR_Generate の戻り値。matrix(x,y) True=黒。
+' quiet  : 周囲の白余白（モジュール数）。
+Public Sub RenderQRToCells(ws As Worksheet, ByVal topRow As Long, ByVal leftCol As Long, _
+                           ByVal matrix As Variant, Optional ByVal quiet As Long = 4)
+    Dim size As Long: size = UBound(matrix, 1) + 1
+    Dim full As Long: full = size + 2 * quiet
+    Dim c As Long, r As Long
+
+    ' セルを正方形に近づける（列幅≒行高≒約20px）
+    For c = leftCol To leftCol + full - 1
+        ws.Columns(c).ColumnWidth = 2.14
+    Next c
+    For r = topRow To topRow + full - 1
+        ws.Rows(r).RowHeight = 15
+    Next r
+
+    With ws.Range(ws.Cells(topRow, leftCol), ws.Cells(topRow + full - 1, leftCol + full - 1)).Interior
+        .Color = RGB(255, 255, 255)                 ' 余白＋背景を白に
+        .Pattern = xlSolid
+    End With
+
+    Dim x As Long, y As Long, runStart As Long
+    For y = 0 To size - 1
+        runStart = -1
+        For x = 0 To size - 1
+            If matrix(x, y) Then
+                If runStart = -1 Then runStart = x
+            Else
+                If runStart >= 0 Then
+                    ColorRun ws, topRow + quiet + y, leftCol + quiet + runStart, leftCol + quiet + x - 1
+                    runStart = -1
+                End If
+            End If
+        Next x
+        If runStart >= 0 Then
+            ColorRun ws, topRow + quiet + y, leftCol + quiet + runStart, leftCol + quiet + size - 1
+        End If
+    Next y
+End Sub
+
+Private Sub ColorRun(ws As Worksheet, ByVal r As Long, ByVal c1 As Long, ByVal c2 As Long)
+    ws.Range(ws.Cells(r, c1), ws.Cells(r, c2)).Interior.Color = RGB(0, 0, 0)
+End Sub
+
+'============================ CSV / ファイル読込 ==============================
+
+Private Function ReadAllLines(ByVal path As String, ByVal enc As String, ByRef lines() As String) As Long
+    Dim content As String
+    content = ReadFileText(path, enc)
+    content = Replace(content, vbCrLf, vbLf)
+    content = Replace(content, vbCr, vbLf)
+    lines = Split(content, vbLf)
+    ReadAllLines = UBound(lines) - LBound(lines) + 1
+End Function
+
+Private Function ReadFileText(ByVal path As String, ByVal enc As String) As String
+    Dim fnum As Integer: fnum = FreeFile
+    Open path For Binary Access Read As #fnum
+    Dim sz As Long: sz = LOF(fnum)
+    If sz = 0 Then Close #fnum: ReadFileText = "": Exit Function
+    Dim bytes() As Byte: ReDim bytes(0 To sz - 1)
+    Get #fnum, , bytes
+    Close #fnum
+
+    Dim e As String: e = UCase$(Replace(Replace(enc, "-", ""), " ", ""))
+    If e = "UTF8" Then
+        ReadFileText = DecodeUTF8(bytes)
+    Else
+        ' システム既定コードページで解釈（日本語WindowsではShift-JIS）
+        ReadFileText = StrConv(bytes, vbUnicode)
+    End If
+End Function
+
+Private Function DecodeUTF8(bytes() As Byte) As String
+    Dim i As Long: i = LBound(bytes)
+    Dim last As Long: last = UBound(bytes)
+    ' BOM を除去
+    If (last - i + 1) >= 3 Then
+        If bytes(i) = &HEF And bytes(i + 1) = &HBB And bytes(i + 2) = &HBF Then i = i + 3
+    End If
+
+    Dim parts() As String, pc As Long
+    ReDim parts(0 To 63): pc = 0
+    Dim chunk As String: chunk = ""
+    Do While i <= last
+        Dim b0 As Long: b0 = bytes(i)
+        Dim cp As Long
+        If b0 < &H80 Then
+            cp = b0: i = i + 1
+        ElseIf (b0 And &HE0) = &HC0 And i + 1 <= last Then
+            cp = ((b0 And &H1F) * &H40) Or (bytes(i + 1) And &H3F): i = i + 2
+        ElseIf (b0 And &HF0) = &HE0 And i + 2 <= last Then
+            cp = ((b0 And &HF) * &H1000) Or ((bytes(i + 1) And &H3F) * &H40) Or (bytes(i + 2) And &H3F): i = i + 3
+        ElseIf (b0 And &HF8) = &HF0 And i + 3 <= last Then
+            cp = ((b0 And &H7) * &H40000) Or ((bytes(i + 1) And &H3F) * &H1000) _
+                 Or ((bytes(i + 2) And &H3F) * &H40) Or (bytes(i + 3) And &H3F): i = i + 4
+        Else
+            cp = b0: i = i + 1
+        End If
+
+        If cp < &H10000 Then
+            chunk = chunk & ChrW(cp And &HFFFF&)
+        Else
+            cp = cp - &H10000
+            chunk = chunk & ChrW(&HD800& Or (cp \ &H400&)) & ChrW(&HDC00& Or (cp And &H3FF&))
+        End If
+        If Len(chunk) > 1000 Then
+            parts(pc) = chunk: pc = pc + 1
+            If pc > UBound(parts) Then ReDim Preserve parts(0 To pc + 63)
+            chunk = ""
+        End If
+    Loop
+    parts(pc) = chunk
+    Dim k As Long, sb As String
+    For k = 0 To pc: sb = sb & parts(k): Next k
+    DecodeUTF8 = sb
+End Function
+
+' 簡易CSVパーサ（ダブルクオート・"" エスケープ対応）
+Private Sub ParseCSVLine(ByVal ln As String, ByRef fields() As String)
+    Dim res() As String: ReDim res(0 To 0)
+    Dim cnt As Long: cnt = 0
+    Dim cur As String: cur = ""
+    Dim inQ As Boolean: inQ = False
+    Dim i As Long, ch As String
+    For i = 1 To Len(ln)
+        ch = Mid$(ln, i, 1)
+        If inQ Then
+            If ch = """" Then
+                If i < Len(ln) And Mid$(ln, i + 1, 1) = """" Then
+                    cur = cur & """": i = i + 1
+                Else
+                    inQ = False
+                End If
+            Else
+                cur = cur & ch
+            End If
+        Else
+            If ch = """" Then
+                inQ = True
+            ElseIf ch = "," Then
+                res(cnt) = cur: cnt = cnt + 1: ReDim Preserve res(0 To cnt): cur = ""
+            Else
+                cur = cur & ch
+            End If
+        End If
+    Next i
+    res(cnt) = cur
+    fields = res
+End Sub
+
+'============================ シート・ボタン補助 ==============================
+
+Private Function GetOrAddSheet(ByVal name As String) As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(name)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = name
+    End If
+    Set GetOrAddSheet = ws
+End Function
+
+' 塗り・列幅・行高をリセットした真っさらなシートを返す（描画先用）
+Private Function FreshSheet(ByVal name As String) As Worksheet
+    Dim ws As Worksheet: Set ws = GetOrAddSheet(name)
+    ws.Cells.Clear
+    ws.Cells.ColumnWidth = 8.43
+    ws.Cells.RowHeight = 15
+    Dim shp As Shape
+    For Each shp In ws.Shapes: shp.Delete: Next shp
+    Set FreshSheet = ws
+End Function
+
+Private Sub AddButton(ws As Worksheet, ByVal caption As String, ByVal macroName As String, _
+                      anchor As Range, ByVal w As Single, ByVal h As Single)
+    Dim b As Button
+    Set b = ws.Buttons.Add(anchor.Left, anchor.Top, w, h)
+    b.Caption = caption
+    b.OnAction = macroName
+    b.Font.Size = 11
+End Sub
+
+Private Sub DeleteButtons(ws As Worksheet)
+    On Error Resume Next
+    ws.Buttons.Delete
+    On Error GoTo 0
+End Sub
+
+Private Function ReadLong(ByVal v As Variant, ByVal dflt As Long) As Long
+    If IsNumeric(v) Then ReadLong = CLng(v) Else ReadLong = dflt
+End Function
