@@ -242,15 +242,15 @@ eh2:
 End Sub
 '============================ CSVから印刷用グリッド出力 =======================
 ' パネル（B8:CSVパス, B9:列, B11:飛ばし行数, B12:文字コード, B4:誤り訂正）を使い、
-' CSVを読み込んで「QR印刷」シートに切れないグリッドで配置＋自動改ページします。
-' ※CSV運用の人はこれを実行してください（QR_MakeGridForPrint はシート直接読み取り用）。
+' CSVを読み込んで「QR印刷」シートに、1個ずつ枠で囲んだグリッドを作ります。
+' 列幅・行高は最初に一括設定し、描画は塗りのみ（＝高速）。改ページも自動。
 Public Sub QR_MakeGridFromCSV()
-    ' === 設定 ===
-    Const COLS_PER_ROW As Long = 4      ' 横に並べる数（増やすとQRは小さく＝1ページに多く）
-    Const GAP As Long = 2               ' QR同士のすき間（セル）
+    ' === 設定（ここだけ変えればOK） ===
+    Const COLS_PER_ROW As Long = 8      ' 横に並べる数（増やすとQRは小さく＝1ページに多く）
+    Const GAP As Long = 2               ' 枠と枠のすき間（セル）
     Const QUIET As Long = 4             ' QRの白余白（モジュール）
     Const MARGIN_CM As Double = 1#      ' 印刷余白(cm)
-    Const LABEL_FONT As Long = 20       ' QR下のラベル文字サイズ（大きくしたい時は増やす）
+    Const LABEL_FONT As Long = 20       ' ラベル文字サイズ（大きくしたい時は増やす）
 
     Dim ws As Worksheet
     On Error Resume Next
@@ -258,7 +258,7 @@ Public Sub QR_MakeGridFromCSV()
     On Error GoTo 0
     If ws Is Nothing Then MsgBox "先に QR_Setup を実行してください。", vbExclamation: Exit Sub
 
-    ' パネル設定（QR_MakeFromCSV と同じ読み方）
+    ' --- パネル設定 ---
     Dim path As String: path = Trim$(CStr(ws.Range("B8").Value))
     If Left$(path, 1) = Chr$(34) Then path = Mid$(path, 2)
     If Right$(path, 1) = Chr$(34) Then path = Left$(path, Len(path) - 1)
@@ -284,15 +284,16 @@ Public Sub QR_MakeGridFromCSV()
     If nLines = 0 Then MsgBox "CSVが空です。", vbExclamation: Exit Sub
 
     Application.ScreenUpdating = False
+    Application.EnableEvents = False
     Application.StatusBar = "QRコードを生成中..."
 
-    ' 1) 全QR生成＋最大サイズ
+    ' --- 1) 全QR生成 ---
     Dim mats() As Variant: ReDim mats(1 To nLines)
-    Dim texts() As String: ReDim texts(1 To nLines)
-    Dim g1s() As String: ReDim g1s(1 To nLines)   ' QRの下1行目（G列）
-    Dim g2s() As String: ReDim g2s(1 To nLines)   ' QRの下2行目（M列）
+    Dim g1s() As String: ReDim g1s(1 To nLines)
+    Dim g2s() As String: ReDim g2s(1 To nLines)
     Dim cnt As Long: cnt = 0
     Dim maxSize As Long: maxSize = 0
+    Dim maxLabelLen As Long: maxLabelLen = 1
     Dim i As Long
     For i = skipRows To nLines - 1
         If Len(Trim$(lines(i))) > 0 Then
@@ -303,45 +304,63 @@ Public Sub QR_MakeGridFromCSV()
             If Len(content) > 0 Then
                 cnt = cnt + 1
                 mats(cnt) = QR_Generate(content, ecc)
-                texts(cnt) = content
-                If 6 <= UBound(fields) Then g1s(cnt) = fields(6)    ' G列(7列目)
-                If 12 <= UBound(fields) Then g2s(cnt) = fields(12)  ' M列(13列目)
+                If 6 <= UBound(fields) Then g1s(cnt) = fields(6)
+                If 12 <= UBound(fields) Then g2s(cnt) = fields(12)
+                If Len(g1s(cnt)) > maxLabelLen Then maxLabelLen = Len(g1s(cnt))
+                If Len(g2s(cnt)) > maxLabelLen Then maxLabelLen = Len(g2s(cnt))
                 Dim sz As Long: sz = UBound(mats(cnt), 1) + 1
                 If sz > maxSize Then maxSize = sz
             End If
         End If
     Next i
     If cnt = 0 Then
-        Application.StatusBar = False: Application.ScreenUpdating = True
+        Application.StatusBar = False: Application.EnableEvents = True: Application.ScreenUpdating = True
         MsgBox "QR化できるデータがありませんでした（列・飛ばし行数・文字コードを確認）。", vbExclamation: Exit Sub
     End If
 
-    ' 2) 均一グリッド＋改ページ
+    ' --- 2) 寸法 ---
     Dim blockDim As Long: blockDim = maxSize + 2 * QUIET
     Dim blockCols As Long: blockCols = blockDim + GAP
-    Dim blockRows As Long: blockRows = blockDim + 2 + GAP
+    Dim labelOff As Long: labelOff = maxSize + QUIET + 1      ' ラベル1行目＝QRのすぐ下
+    Dim blockRows As Long: blockRows = labelOff + 2 + GAP
+    Dim labelFont As Double: labelFont = LABEL_FONT          ' 幅に収まるよう必要なら自動縮小
+    Dim fitF As Double: fitF = blockDim * 2.14 * 11 / maxLabelLen
+    If fitF < labelFont Then labelFont = fitF
+    If labelFont < 5 Then labelFont = 5
 
-    Dim outWs As Worksheet: Set outWs = FreshSheet("QR印刷")
+    Dim numRows As Long: numRows = (cnt + COLS_PER_ROW - 1) \ COLS_PER_ROW
     Dim totalCols As Long: totalCols = COLS_PER_ROW * blockCols
-    Dim k As Long, gx As Long, gy As Long, topRow As Long, leftCol As Long
+    Dim totalRows As Long: totalRows = numRows * blockRows
+
+    ' --- 3) 列幅・行高を一括設定（高速化の要） ---
+    Dim outWs As Worksheet: Set outWs = FreshSheet("QR印刷")
+    outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
+    outWs.Range(outWs.Cells(1, 1), outWs.Cells(totalRows, 1)).EntireRow.RowHeight = 15
+
+    ' --- 4) 描画（塗りのみ）＋ラベル値＋枠 ---
+    Dim k As Long, gx As Long, gy As Long, topRow As Long, leftCol As Long, qrOff As Long
     For k = 1 To cnt
-        If k Mod 100 = 0 Then Application.StatusBar = "配置中... " & k & " / " & cnt
+        If k Mod 50 = 0 Then Application.StatusBar = "配置中... " & k & " / " & cnt
         gx = (k - 1) Mod COLS_PER_ROW
         gy = (k - 1) \ COLS_PER_ROW
         topRow = 1 + gy * blockRows
         leftCol = 1 + gx * blockCols
-        RenderQRToCells outWs, topRow, leftCol, mats(k), QUIET
-        Dim lr As Long: lr = topRow + (UBound(mats(k), 1) + 1) + QUIET + 1   ' ラベル行＝そのQRの下（末尾の +1 が隙間。増やすと広く）
-        outWs.Cells(lr, leftCol).Value = g1s(k)
-        outWs.Cells(lr + 1, leftCol).Value = g2s(k)
-        outWs.Cells(lr, leftCol).Font.Size = LABEL_FONT
-        outWs.Cells(lr + 1, leftCol).Font.Size = LABEL_FONT
-        outWs.Rows(lr).RowHeight = LABEL_FONT * 1.4
-        outWs.Rows(lr + 1).RowHeight = LABEL_FONT * 1.4
-        outWs.Range(outWs.Cells(topRow, leftCol), outWs.Cells(lr + 1, leftCol + blockDim - 1)).BorderAround Weight:=xlMedium   ' 1個ずつ枠線（切り取り用）
+        qrOff = (blockDim - ((UBound(mats(k), 1) + 1) + 2 * QUIET)) \ 2
+        FastRenderQR outWs, topRow, leftCol + qrOff, mats(k), QUIET
+        outWs.Cells(topRow + labelOff, leftCol).Value = g1s(k)
+        outWs.Cells(topRow + labelOff + 1, leftCol).Value = g2s(k)
+        outWs.Range(outWs.Cells(topRow, leftCol), outWs.Cells(topRow + labelOff + 1, leftCol + blockDim - 1)).BorderAround Weight:=xlMedium
     Next k
-    outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
 
+    ' --- 5) ラベルの文字サイズ・行高（段ごとに一括） ---
+    For gy = 0 To numRows - 1
+        Dim lrow As Long: lrow = 1 + gy * blockRows + labelOff
+        outWs.Range(outWs.Cells(lrow, 1), outWs.Cells(lrow + 1, totalCols)).Font.Size = labelFont
+        outWs.Rows(lrow).RowHeight = labelFont * 1.4
+        outWs.Rows(lrow + 1).RowHeight = labelFont * 1.4
+    Next gy
+
+    ' --- 6) ページ設定＋改ページ ---
     With outWs.PageSetup
         .Orientation = xlPortrait
         .Zoom = False
@@ -352,29 +371,27 @@ Public Sub QR_MakeGridFromCSV()
         .TopMargin = Application.CentimetersToPoints(MARGIN_CM)
         .BottomMargin = Application.CentimetersToPoints(MARGIN_CM)
     End With
-
     Dim pw As Double, ph As Double
     pw = 595.3 - 2 * Application.CentimetersToPoints(MARGIN_CM)
     ph = 841.9 - 2 * Application.CentimetersToPoints(MARGIN_CM)
     Dim rowsPerPage As Long
-    rowsPerPage = Int((ph / pw) * COLS_PER_ROW * blockCols / ((blockDim + GAP) + 2 * LABEL_FONT * 1.4 / 15))
+    rowsPerPage = Int((ph / pw) * COLS_PER_ROW * blockCols / ((labelOff + GAP) + 2 * labelFont * 1.4 / 15))
     If rowsPerPage < 1 Then rowsPerPage = 1
-
     outWs.ResetAllPageBreaks
-    Dim totalBlockRows As Long: totalBlockRows = (cnt + COLS_PER_ROW - 1) \ COLS_PER_ROW
     Dim br As Long
-    For br = rowsPerPage To totalBlockRows - 1 Step rowsPerPage
+    For br = rowsPerPage To numRows - 1 Step rowsPerPage
         outWs.Rows(1 + br * blockRows).PageBreak = xlPageBreakManual
     Next br
 
     Application.StatusBar = False
+    Application.EnableEvents = True
     Application.ScreenUpdating = True
     outWs.Activate: outWs.Range("A1").Select
-    MsgBox cnt & " 件を印刷用グリッドに配置しました（横 " & COLS_PER_ROW & " × 縦 " & rowsPerPage & " ／ページ）。" & vbCrLf & _
-           "［ファイル→印刷］で確認してください。どのページでもQRは切れません。", vbInformation, "QR印刷(CSV)"
+    MsgBox cnt & " 件を印刷用グリッドに配置しました（横 " & COLS_PER_ROW & " × 縦 " & rowsPerPage & " ／ページ）。", vbInformation, "QR印刷"
     Exit Sub
 ehg:
     Application.StatusBar = False
+    Application.EnableEvents = True
     Application.ScreenUpdating = True
     MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeGridFromCSV"
 End Sub
@@ -423,6 +440,26 @@ End Sub
 
 Private Sub ColorRun(ws As Worksheet, ByVal r As Long, ByVal c1 As Long, ByVal c2 As Long)
     ws.Range(ws.Cells(r, c1), ws.Cells(r, c2)).Interior.Color = RGB(0, 0, 0)
+End Sub
+
+' 高速QR描画：黒モジュールの塗りだけ（列幅・行高・白塗りはしない＝呼び出し側で一括設定）
+Private Sub FastRenderQR(ws As Worksheet, ByVal topRow As Long, ByVal leftCol As Long, ByVal matrix As Variant, ByVal quiet As Long)
+    Dim size As Long: size = UBound(matrix, 1) + 1
+    Dim x As Long, y As Long, rs As Long
+    For y = 0 To size - 1
+        rs = -1
+        For x = 0 To size - 1
+            If matrix(x, y) Then
+                If rs = -1 Then rs = x
+            Else
+                If rs >= 0 Then
+                    ws.Range(ws.Cells(topRow + quiet + y, leftCol + quiet + rs), ws.Cells(topRow + quiet + y, leftCol + quiet + x - 1)).Interior.Color = 0
+                    rs = -1
+                End If
+            End If
+        Next x
+        If rs >= 0 Then ws.Range(ws.Cells(topRow + quiet + y, leftCol + quiet + rs), ws.Cells(topRow + quiet + y, leftCol + quiet + size - 1)).Interior.Color = 0
+    Next y
 End Sub
 
 '============================ CSV / ファイル読込 ==============================
