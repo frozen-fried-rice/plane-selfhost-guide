@@ -58,13 +58,31 @@ Public Sub QR_Setup()
 
     AddButton ws, "QRコード生成", "QR_MakeSingle", ws.Range("D3"), 150, 44
     AddButton ws, "CSVから一括生成", "QR_MakeFromCSV", ws.Range("D8"), 150, 44
+    AddButton ws, "CSVから印刷用に生成", "QR_MakeGridFromCSV", ws.Range("D11"), 170, 44
 
-    ws.Range("A14").Value = "使い方: B3に内容を入れて［QRコード生成］。CSVはパス等を設定して［CSVから一括生成］。"
+    ws.Range("A14").Value = "使い方: B3に内容を入れて［QRコード生成］。CSVはパス等を設定して［CSVから一括生成］／印刷用は［CSVから印刷用に生成］。"
     ws.Activate
     ws.Range("B3").Select
     MsgBox "準備完了です。" & vbCrLf & _
            "・単票: B3 に内容を入れて［QRコード生成］" & vbCrLf & _
            "・一括: B8〜B12 を設定して［CSVから一括生成］", vbInformation, "QRツール"
+End Sub
+
+' 既存パネルに［CSVから印刷用に生成］ボタンだけを追加（設定は消しません。一度だけ実行）
+Public Sub QR_AddPrintButton()
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(PANEL_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then MsgBox "先に QR_Setup を実行してください。", vbExclamation: Exit Sub
+    Dim b As Button
+    Set b = ws.Buttons.Add(ws.Range("D11").Left, ws.Range("D11").Top, 170, 44)
+    b.Caption = "CSVから印刷用に生成"
+    b.OnAction = "QR_MakeGridFromCSV"
+    b.Font.Size = 11
+    ws.Activate
+    MsgBox "［CSVから印刷用に生成］ボタンを追加しました。" & vbCrLf & _
+           "このボタンを押すと、切れない印刷用グリッド（シート「QR印刷」）が作られます。", vbInformation, "QRツール"
 End Sub
 
 '============================ 単票生成 ========================================
