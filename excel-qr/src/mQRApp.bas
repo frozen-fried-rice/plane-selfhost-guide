@@ -250,6 +250,7 @@ Public Sub QR_MakeGridFromCSV()
     Const GAP As Long = 2               ' QR同士のすき間（セル）
     Const QUIET As Long = 4             ' QRの白余白（モジュール）
     Const MARGIN_CM As Double = 1#      ' 印刷余白(cm)
+    Const LABEL_FONT As Long = 20       ' QR下のラベル文字サイズ（大きくしたい時は増やす）
 
     Dim ws As Worksheet
     On Error Resume Next
@@ -332,7 +333,10 @@ Public Sub QR_MakeGridFromCSV()
         RenderQRToCells outWs, topRow, leftCol, mats(k), QUIET
         outWs.Cells(topRow + blockDim, leftCol).Value = g1s(k)
         outWs.Cells(topRow + blockDim + 1, leftCol).Value = g2s(k)
-        outWs.Range(outWs.Cells(topRow + blockDim, leftCol), outWs.Cells(topRow + blockDim + 1, leftCol + blockDim - 1)).HorizontalAlignment = xlCenterAcrossSelection
+        outWs.Cells(topRow + blockDim, leftCol).Font.Size = LABEL_FONT
+        outWs.Cells(topRow + blockDim + 1, leftCol).Font.Size = LABEL_FONT
+        outWs.Rows(topRow + blockDim).RowHeight = LABEL_FONT * 1.4
+        outWs.Rows(topRow + blockDim + 1).RowHeight = LABEL_FONT * 1.4
     Next k
     outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
 
@@ -351,7 +355,7 @@ Public Sub QR_MakeGridFromCSV()
     pw = 595.3 - 2 * Application.CentimetersToPoints(MARGIN_CM)
     ph = 841.9 - 2 * Application.CentimetersToPoints(MARGIN_CM)
     Dim rowsPerPage As Long
-    rowsPerPage = Int((ph / pw) * COLS_PER_ROW * blockCols / blockRows)
+    rowsPerPage = Int((ph / pw) * COLS_PER_ROW * blockCols / ((blockDim + GAP) + 2 * LABEL_FONT * 1.4 / 15))
     If rowsPerPage < 1 Then rowsPerPage = 1
 
     outWs.ResetAllPageBreaks
