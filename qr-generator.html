@@ -1,0 +1,615 @@
+<meta charset="utf-8">
+<title>QRコード発行ツール（オフライン / スタンドアロン）</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #d7dbe0;
+    --text: #1f2933;
+    --muted: #667085;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+  }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  textarea, select, input[type=number], input[type=text] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--text);
+  }
+  textarea { min-height: 90px; resize: vertical; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 150px; }
+  .field { margin-bottom: 16px; }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button.ghost {
+    background: #fff;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  button.ghost:hover { background: #eef2ff; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .result { text-align: center; }
+  #qrcanvas {
+    image-rendering: pixelated;
+    border: 1px solid var(--border);
+    background: #fff;
+    max-width: 100%;
+  }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .err { color: #b42318; font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  details { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  summary { cursor: pointer; font-weight: 600; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+</style>
+
+<div class="wrap">
+  <h1>QRコード発行ツール</h1>
+  <div class="sub">完全オフライン動作 / 外部ライブラリ・API不使用 / このHTMLファイル単体で動きます</div>
+
+  <div class="card">
+    <div class="field">
+      <label for="text">QRにする内容（URL・テキスト・番号など）</label>
+      <textarea id="text" placeholder="例: https://example.com  や  在庫ID:12345">https://example.com</textarea>
+      <div class="hint">日本語もそのまま入力できます（UTF-8で符号化されます）。</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="ecl">誤り訂正レベル</label>
+        <select id="ecl">
+          <option value="0">L（約7% / 最小サイズ）</option>
+          <option value="1" selected>M（約15% / 標準）</option>
+          <option value="2">Q（約25%）</option>
+          <option value="3">H（約30% / 印刷・汚れに強い）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="scale">1マスのピクセル数</label>
+        <input type="number" id="scale" value="8" min="1" max="40">
+      </div>
+      <div class="field">
+        <label for="margin">余白（マス数）</label>
+        <input type="number" id="margin" value="4" min="0" max="20">
+      </div>
+    </div>
+
+    <div class="btns">
+      <button id="gen">QRを生成</button>
+      <button id="dl" class="ghost">PNGで保存</button>
+      <button id="print" class="ghost">印刷</button>
+    </div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="card result" id="resultCard" style="display:none">
+    <canvas id="qrcanvas"></canvas>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <details>
+    <summary>使い方・仕組み</summary>
+    <p>
+      このファイルは <b>1枚のHTMLに全処理を内蔵</b>しています。QRコードの符号化
+      （数値化・Reed-Solomon誤り訂正・マスク処理）をすべて内蔵のJavaScriptで計算するため、
+      インターネットに接続していないブラウザでも動作します。社内の閉じた環境やスタンドアロンPCに
+      ファイルをコピーするだけで使えます。<br><br>
+      ・「PNGで保存」で画像として書き出せます。<br>
+      ・Excelに貼りたい場合は、生成されたQRを右クリックでコピー→貼り付け、または保存したPNGを挿入してください。<br>
+      ・大量発行したい場合は、テキスト欄の内容を差し替えて都度生成できます（自動一括処理も追加可能です）。
+    </p>
+  </details>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   純粋JavaScript QRコード生成エンジン（外部依存なし）
+   アルゴリズムは Nayuki の QR Code generator を基に実装（バイトモード / UTF-8）
+   ========================================================================= */
+var QR = (function () {
+
+  // ---- 定数テーブル ----
+  var ECC_CODEWORDS_PER_BLOCK = [
+    [-1,7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30],
+    [-1,10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28],
+    [-1,13,22,18,26,18,24,18,22,20,24,28,26,24,20,30,24,28,28,26,30,28,30,30,30,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30],
+    [-1,17,28,22,16,22,28,26,26,24,28,24,28,22,24,24,30,28,28,26,28,30,24,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30]
+  ];
+  var NUM_ERROR_CORRECTION_BLOCKS = [
+    [-1,1,1,1,1,1,2,2,2,2,4,4,4,4,4,6,6,6,6,7,8,8,9,9,10,12,12,12,13,14,15,16,17,18,19,19,20,21,22,24,25],
+    [-1,1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,17,17,18,20,21,23,25,26,28,29,31,33,35,37,38,40,43,45,47,49],
+    [-1,1,1,2,2,4,4,6,6,8,8,8,10,12,16,12,17,16,18,21,20,23,23,25,27,29,34,34,35,38,40,43,45,48,51,53,56,59,62,65,68],
+    [-1,1,1,2,4,4,4,5,6,8,8,11,11,16,16,18,16,19,21,25,25,25,34,30,32,35,37,40,42,45,48,51,54,57,60,63,66,70,74,77,81]
+  ];
+  var MIN_VER = 1, MAX_VER = 40;
+  var PENALTY_N1 = 3, PENALTY_N2 = 3, PENALTY_N3 = 40, PENALTY_N4 = 10;
+
+  // ---- ユーティリティ ----
+  function getNumRawDataModules(ver) {
+    var result = (16 * ver + 128) * ver + 64;
+    if (ver >= 2) {
+      var numAlign = Math.floor(ver / 7) + 2;
+      result -= (25 * numAlign - 10) * numAlign - 55;
+      if (ver >= 7) result -= 36;
+    }
+    return result;
+  }
+  function getNumDataCodewords(ver, ecl) {
+    return Math.floor(getNumRawDataModules(ver) / 8)
+      - ECC_CODEWORDS_PER_BLOCK[ecl][ver] * NUM_ERROR_CORRECTION_BLOCKS[ecl][ver];
+  }
+
+  // UTF-8バイト列へ
+  function toUtf8Bytes(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) {
+        out.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F));
+      } else if (c >= 0xD800 && c < 0xDC00 && i + 1 < str.length) {
+        var c2 = str.charCodeAt(i + 1);
+        var cp = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+        i++;
+        out.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F),
+                 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+      } else {
+        out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F));
+      }
+    }
+    return out;
+  }
+
+  // ---- Reed-Solomon ----
+  function reedSolomonMultiply(x, y) {
+    var z = 0;
+    for (var i = 7; i >= 0; i--) {
+      z = (z << 1) ^ ((z >>> 7) * 0x11D);
+      z ^= ((y >>> i) & 1) * x;
+    }
+    return z & 0xFF;
+  }
+  function reedSolomonComputeDivisor(degree) {
+    var result = [];
+    for (var i = 0; i < degree - 1; i++) result.push(0);
+    result.push(1);
+    var root = 1;
+    for (var i = 0; i < degree; i++) {
+      for (var j = 0; j < result.length; j++) {
+        result[j] = reedSolomonMultiply(result[j], root);
+        if (j + 1 < result.length) result[j] ^= result[j + 1];
+      }
+      root = reedSolomonMultiply(root, 0x02);
+    }
+    return result;
+  }
+  function reedSolomonComputeRemainder(data, divisor) {
+    var result = divisor.map(function () { return 0; });
+    data.forEach(function (b) {
+      var factor = b ^ result.shift();
+      result.push(0);
+      divisor.forEach(function (coef, i) {
+        result[i] ^= reedSolomonMultiply(coef, factor);
+      });
+    });
+    return result;
+  }
+
+  // ---- QrCode オブジェクト ----
+  function QrCode(ver, ecl, dataCodewords, mask) {
+    this.version = ver;
+    this.ecl = ecl;
+    this.size = ver * 4 + 17;
+    this.modules = [];
+    this.isFunction = [];
+    for (var i = 0; i < this.size; i++) {
+      this.modules.push(new Array(this.size).fill(false));
+      this.isFunction.push(new Array(this.size).fill(false));
+    }
+    this.drawFunctionPatterns();
+    var allCodewords = this.addEccAndInterleave(dataCodewords);
+    this.drawCodewords(allCodewords);
+
+    if (mask == -1) {
+      var minPenalty = Infinity;
+      for (var m = 0; m < 8; m++) {
+        this.applyMask(m);
+        this.drawFormatBits(m);
+        var p = this.getPenaltyScore();
+        if (p < minPenalty) { mask = m; minPenalty = p; }
+        this.applyMask(m);
+      }
+    }
+    this.mask = mask;
+    this.applyMask(mask);
+    this.drawFormatBits(mask);
+    this.isFunction = null;
+  }
+
+  QrCode.prototype.getModule = function (x, y) {
+    return 0 <= x && x < this.size && 0 <= y && y < this.size && this.modules[y][x];
+  };
+  QrCode.prototype.setFunctionModule = function (x, y, isDark) {
+    this.modules[y][x] = isDark;
+    this.isFunction[y][x] = true;
+  };
+
+  QrCode.prototype.drawFunctionPatterns = function () {
+    for (var i = 0; i < this.size; i++) {
+      this.setFunctionModule(6, i, i % 2 == 0);
+      this.setFunctionModule(i, 6, i % 2 == 0);
+    }
+    this.drawFinderPattern(3, 3);
+    this.drawFinderPattern(this.size - 4, 3);
+    this.drawFinderPattern(3, this.size - 4);
+
+    var alignPos = this.getAlignmentPatternPositions();
+    var n = alignPos.length;
+    for (var i = 0; i < n; i++) {
+      for (var j = 0; j < n; j++) {
+        if (!((i == 0 && j == 0) || (i == 0 && j == n - 1) || (i == n - 1 && j == 0)))
+          this.drawAlignmentPattern(alignPos[i], alignPos[j]);
+      }
+    }
+    this.drawFormatBits(0);
+    this.drawVersion();
+  };
+
+  QrCode.prototype.drawFinderPattern = function (x, y) {
+    for (var dy = -4; dy <= 4; dy++) {
+      for (var dx = -4; dx <= 4; dx++) {
+        var dist = Math.max(Math.abs(dx), Math.abs(dy));
+        var xx = x + dx, yy = y + dy;
+        if (0 <= xx && xx < this.size && 0 <= yy && yy < this.size)
+          this.setFunctionModule(xx, yy, dist != 2 && dist != 4);
+      }
+    }
+  };
+
+  QrCode.prototype.drawAlignmentPattern = function (x, y) {
+    for (var dy = -2; dy <= 2; dy++)
+      for (var dx = -2; dx <= 2; dx++)
+        this.setFunctionModule(x + dx, y + dy, Math.max(Math.abs(dx), Math.abs(dy)) != 1);
+  };
+
+  QrCode.prototype.getAlignmentPatternPositions = function () {
+    if (this.version == 1) return [];
+    var numAlign = Math.floor(this.version / 7) + 2;
+    var step = (this.version == 32) ? 26 :
+      Math.ceil((this.version * 4 + 4) / (numAlign * 2 - 2)) * 2;
+    var result = [6];
+    for (var pos = this.size - 7; result.length < numAlign; pos -= step)
+      result.splice(1, 0, pos);
+    return result;
+  };
+
+  QrCode.prototype.drawFormatBits = function (mask) {
+    var data = (this.ecl << 3 | mask); // 2 bits ECL(表現) + 3 bits mask → but need ECL bits mapping
+    // ECLごとの2ビット値: M=0,L=1,H=2,Q=3 だがここでは formatBits 用の値を使う
+    var eclBits = [1, 0, 3, 2][this.ecl]; // L,M,Q,H → 01,00,11,10
+    data = (eclBits << 3) | mask;
+    var rem = data;
+    for (var i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    var bits = ((data << 10) | rem) ^ 0x5412;
+
+    for (var i = 0; i <= 5; i++) this.setFunctionModule(8, i, ((bits >>> i) & 1) != 0);
+    this.setFunctionModule(8, 7, ((bits >>> 6) & 1) != 0);
+    this.setFunctionModule(8, 8, ((bits >>> 7) & 1) != 0);
+    this.setFunctionModule(7, 8, ((bits >>> 8) & 1) != 0);
+    for (var i = 9; i < 15; i++) this.setFunctionModule(14 - i, 8, ((bits >>> i) & 1) != 0);
+
+    for (var i = 0; i < 8; i++) this.setFunctionModule(this.size - 1 - i, 8, ((bits >>> i) & 1) != 0);
+    for (var i = 8; i < 15; i++) this.setFunctionModule(8, this.size - 15 + i, ((bits >>> i) & 1) != 0);
+    this.setFunctionModule(8, this.size - 8, true);
+  };
+
+  QrCode.prototype.drawVersion = function () {
+    if (this.version < 7) return;
+    var rem = this.version;
+    for (var i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+    var bits = (this.version << 12) | rem;
+    for (var i = 0; i < 18; i++) {
+      var bit = ((bits >>> i) & 1) != 0;
+      var a = this.size - 11 + i % 3;
+      var b = Math.floor(i / 3);
+      this.setFunctionModule(a, b, bit);
+      this.setFunctionModule(b, a, bit);
+    }
+  };
+
+  QrCode.prototype.addEccAndInterleave = function (data) {
+    var ver = this.version, ecl = this.ecl;
+    var numBlocks = NUM_ERROR_CORRECTION_BLOCKS[ecl][ver];
+    var blockEccLen = ECC_CODEWORDS_PER_BLOCK[ecl][ver];
+    var rawCodewords = Math.floor(getNumRawDataModules(ver) / 8);
+    var numShortBlocks = numBlocks - rawCodewords % numBlocks;
+    var shortBlockLen = Math.floor(rawCodewords / numBlocks);
+
+    var blocks = [];
+    var rsDiv = reedSolomonComputeDivisor(blockEccLen);
+    var k = 0;
+    for (var i = 0; i < numBlocks; i++) {
+      var datLen = shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1);
+      var dat = data.slice(k, k + datLen);
+      k += datLen;
+      var ecc = reedSolomonComputeRemainder(dat, rsDiv);
+      if (i < numShortBlocks) dat.push(0);
+      blocks.push(dat.concat(ecc));
+    }
+
+    var result = [];
+    for (var i = 0; i < blocks[0].length; i++) {
+      for (var j = 0; j < blocks.length; j++) {
+        if (i != shortBlockLen - blockEccLen || j >= numShortBlocks)
+          result.push(blocks[j][i]);
+      }
+    }
+    return result;
+  };
+
+  QrCode.prototype.drawCodewords = function (data) {
+    var i = 0;
+    for (var right = this.size - 1; right >= 1; right -= 2) {
+      if (right == 6) right = 5;
+      for (var vert = 0; vert < this.size; vert++) {
+        for (var j = 0; j < 2; j++) {
+          var x = right - j;
+          var upward = ((right + 1) & 2) == 0;
+          var y = upward ? this.size - 1 - vert : vert;
+          if (!this.isFunction[y][x] && i < data.length * 8) {
+            this.modules[y][x] = ((data[i >>> 3] >>> (7 - (i & 7))) & 1) != 0;
+            i++;
+          }
+        }
+      }
+    }
+  };
+
+  QrCode.prototype.applyMask = function (mask) {
+    for (var y = 0; y < this.size; y++) {
+      for (var x = 0; x < this.size; x++) {
+        var invert;
+        switch (mask) {
+          case 0: invert = (x + y) % 2 == 0; break;
+          case 1: invert = y % 2 == 0; break;
+          case 2: invert = x % 3 == 0; break;
+          case 3: invert = (x + y) % 3 == 0; break;
+          case 4: invert = (Math.floor(x / 3) + Math.floor(y / 2)) % 2 == 0; break;
+          case 5: invert = x * y % 2 + x * y % 3 == 0; break;
+          case 6: invert = (x * y % 2 + x * y % 3) % 2 == 0; break;
+          case 7: invert = ((x + y) % 2 + x * y % 3) % 2 == 0; break;
+        }
+        if (!this.isFunction[y][x] && invert) this.modules[y][x] = !this.modules[y][x];
+      }
+    }
+  };
+
+  QrCode.prototype.getPenaltyScore = function () {
+    var result = 0, size = this.size, self = this;
+    // 行・列の連続
+    for (var y = 0; y < size; y++) {
+      var runColor = false, runX = 0;
+      var runHistory = [0,0,0,0,0,0,0];
+      for (var x = 0; x < size; x++) {
+        if (this.modules[y][x] == runColor) {
+          runX++;
+          if (runX == 5) result += PENALTY_N1;
+          else if (runX > 5) result++;
+        } else {
+          this.finderPenaltyAddHistory(runX, runHistory);
+          if (!runColor) result += this.finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
+          runColor = this.modules[y][x];
+          runX = 1;
+        }
+      }
+      result += this.finderPenaltyTerminateAndCount(runColor, runX, runHistory) * PENALTY_N3;
+    }
+    for (var x = 0; x < size; x++) {
+      var runColor = false, runY = 0;
+      var runHistory = [0,0,0,0,0,0,0];
+      for (var y = 0; y < size; y++) {
+        if (this.modules[y][x] == runColor) {
+          runY++;
+          if (runY == 5) result += PENALTY_N1;
+          else if (runY > 5) result++;
+        } else {
+          this.finderPenaltyAddHistory(runY, runHistory);
+          if (!runColor) result += this.finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
+          runColor = this.modules[y][x];
+          runY = 1;
+        }
+      }
+      result += this.finderPenaltyTerminateAndCount(runColor, runY, runHistory) * PENALTY_N3;
+    }
+    // 2x2ブロック
+    for (var y = 0; y < size - 1; y++) {
+      for (var x = 0; x < size - 1; x++) {
+        var c = this.modules[y][x];
+        if (c == this.modules[y][x + 1] && c == this.modules[y + 1][x] && c == this.modules[y + 1][x + 1])
+          result += PENALTY_N2;
+      }
+    }
+    // 黒率
+    var dark = 0;
+    for (var y = 0; y < size; y++)
+      for (var x = 0; x < size; x++)
+        if (this.modules[y][x]) dark++;
+    var total = size * size;
+    var k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1;
+    result += k * PENALTY_N4;
+    return result;
+  };
+  QrCode.prototype.finderPenaltyCountPatterns = function (rh) {
+    var n = rh[1];
+    var core = n > 0 && rh[2] == n && rh[3] == n * 3 && rh[4] == n && rh[5] == n;
+    return (core && rh[0] >= n * 4 && rh[6] >= n ? 1 : 0)
+      + (core && rh[6] >= n * 4 && rh[0] >= n ? 1 : 0);
+  };
+  QrCode.prototype.finderPenaltyTerminateAndCount = function (curColor, curRun, rh) {
+    if (curColor) { this.finderPenaltyAddHistory(curRun, rh); curRun = 0; }
+    curRun += this.size;
+    this.finderPenaltyAddHistory(curRun, rh);
+    return this.finderPenaltyCountPatterns(rh);
+  };
+  QrCode.prototype.finderPenaltyAddHistory = function (curRun, rh) {
+    if (rh[0] == 0) curRun += this.size;
+    rh.pop();
+    rh.unshift(curRun);
+  };
+
+  // ---- 符号化: バイトモード（UTF-8） ----
+  function encodeText(text, ecl) {
+    var bytes = toUtf8Bytes(text);
+
+    // 収まる最小バージョンを探す
+    var ver;
+    for (ver = MIN_VER; ; ver++) {
+      var dataCapacityBits = getNumDataCodewords(ver, ecl) * 8;
+      var ccBits = (ver <= 9) ? 8 : 16; // バイトモードの文字数指示ビット
+      var usedBits = 4 + ccBits + bytes.length * 8;
+      if (usedBits <= dataCapacityBits) break;
+      if (ver >= MAX_VER) throw new Error("データが大きすぎます。誤り訂正レベルを下げるか内容を短くしてください。");
+    }
+
+    // ビット列生成
+    var bb = [];
+    function appendBits(val, len) {
+      for (var i = len - 1; i >= 0; i--) bb.push((val >>> i) & 1);
+    }
+    appendBits(0x4, 4); // バイトモード指示子
+    var ccBits = (ver <= 9) ? 8 : 16;
+    appendBits(bytes.length, ccBits);
+    for (var i = 0; i < bytes.length; i++) appendBits(bytes[i], 8);
+
+    var dataCapacityBits = getNumDataCodewords(ver, ecl) * 8;
+    // ターミネータ
+    appendBits(0, Math.min(4, dataCapacityBits - bb.length));
+    // バイト境界へ
+    appendBits(0, (8 - bb.length % 8) % 8);
+    // パディング
+    for (var pad = 0xEC; bb.length < dataCapacityBits; pad ^= 0xEC ^ 0x11)
+      appendBits(pad, 8);
+
+    // バイト列へ
+    var dataCodewords = [];
+    for (var i = 0; i < bb.length; i += 8) {
+      var b = 0;
+      for (var j = 0; j < 8; j++) b = (b << 1) | bb[i + j];
+      dataCodewords.push(b);
+    }
+
+    return new QrCode(ver, ecl, dataCodewords, -1);
+  }
+
+  return { encodeText: encodeText };
+})();
+
+/* ========================= UI ========================= */
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var lastQr = null;
+
+  function draw() {
+    var text = $("text").value;
+    var ecl = parseInt($("ecl").value, 10);
+    var scale = Math.max(1, parseInt($("scale").value, 10) || 8);
+    var margin = Math.max(0, parseInt($("margin").value, 10) || 0);
+    $("err").textContent = "";
+
+    if (!text) { $("err").textContent = "内容を入力してください。"; return; }
+
+    try {
+      var qr = QR.encodeText(text, ecl);
+      lastQr = qr;
+      var size = qr.size;
+      var dim = (size + margin * 2) * scale;
+      var canvas = $("qrcanvas");
+      canvas.width = dim;
+      canvas.height = dim;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, dim, dim);
+      ctx.fillStyle = "#000000";
+      for (var y = 0; y < size; y++) {
+        for (var x = 0; x < size; x++) {
+          if (qr.modules[y][x]) {
+            ctx.fillRect((x + margin) * scale, (y + margin) * scale, scale, scale);
+          }
+        }
+      }
+      $("resultCard").style.display = "block";
+      var eclName = ["L", "M", "Q", "H"][ecl];
+      $("meta").textContent =
+        "バージョン " + qr.version + " / " + size + "×" + size +
+        " マス / 誤り訂正 " + eclName + " / 画像 " + dim + "×" + dim + "px";
+    } catch (e) {
+      $("err").textContent = e.message || String(e);
+    }
+  }
+
+  $("gen").addEventListener("click", draw);
+  $("text").addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") draw();
+  });
+
+  $("dl").addEventListener("click", function () {
+    if (!lastQr) { draw(); if (!lastQr) return; }
+    var canvas = $("qrcanvas");
+    var a = document.createElement("a");
+    a.download = "qrcode.png";
+    a.href = canvas.toDataURL("image/png");
+    a.click();
+  });
+
+  $("print").addEventListener("click", function () {
+    if (!lastQr) { draw(); if (!lastQr) return; }
+    var url = $("qrcanvas").toDataURL("image/png");
+    var w = window.open("", "_blank");
+    w.document.write('<img src="' + url + '" style="max-width:90%">');
+    w.document.close();
+    w.focus();
+    w.print();
+  });
+
+  // 初期表示
+  draw();
+})();
+</script>
