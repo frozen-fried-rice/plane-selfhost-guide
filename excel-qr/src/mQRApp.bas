@@ -338,6 +338,7 @@ Public Sub QR_MakeGridFromCSV()
         outWs.Cells(lr + 1, leftCol).Font.Size = LABEL_FONT
         outWs.Rows(lr).RowHeight = LABEL_FONT * 1.4
         outWs.Rows(lr + 1).RowHeight = LABEL_FONT * 1.4
+        outWs.Range(outWs.Cells(topRow, leftCol), outWs.Cells(lr + 1, leftCol + blockDim - 1)).BorderAround Weight:=xlMedium   ' 1個ずつ枠線（切り取り用）
     Next k
     outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
 
