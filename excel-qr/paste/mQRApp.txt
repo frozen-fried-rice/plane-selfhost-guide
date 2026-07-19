@@ -45,7 +45,7 @@ Public Sub QR_Setup()
     ws.Range("B9").Value = 1
     ws.Range("A10").Value = "見出しに使う列番号（0=なし）"
     ws.Range("B10").Value = 0
-    ws.Range("A11").Value = "先頭行を見出しとして飛ばす（1=はい, 0=いいえ）"
+    ws.Range("A11").Value = "先頭の読み飛ばし行数（タイトル・空行・見出しの合計）"
     ws.Range("B11").Value = 1
     ws.Range("A12").Value = "文字コード（UTF-8 / ShiftJIS）"
     ws.Range("B12").Value = "UTF-8"
@@ -105,7 +105,7 @@ Public Sub QR_MakeFromCSV()
     Dim path As String:    path = CStr(ws.Range("B8").Value)
     Dim col As Long:       col = ReadLong(ws.Range("B9").Value, 1)
     Dim labelCol As Long:  labelCol = ReadLong(ws.Range("B10").Value, 0)
-    Dim skipHead As Boolean: skipHead = (ReadLong(ws.Range("B11").Value, 1) = 1)
+    Dim skipRows As Long: skipRows = ReadLong(ws.Range("B11").Value, 0)
     Dim enc As String:     enc = CStr(ws.Range("B12").Value)
     Dim ecc As String:     ecc = CStr(ws.Range("B4").Value)
     Dim quiet As Long:     quiet = ReadLong(ws.Range("B5").Value, 4)
@@ -122,7 +122,7 @@ Public Sub QR_MakeFromCSV()
 
     Dim outRow As Long: outRow = 2
     Dim i As Long, startI As Long, count As Long
-    startI = 0: If skipHead Then startI = 1
+    startI = skipRows
     For i = startI To nLines - 1
         If Len(Trim$(lines(i))) > 0 Then
             Dim fields() As String
