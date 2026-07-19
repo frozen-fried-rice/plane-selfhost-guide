@@ -240,7 +240,6 @@ eh2:
     Application.ScreenUpdating = True
     MsgBox "エラー: " & Err.Description, vbCritical, "QR_MakeFromColumn"
 End Sub
-
 '============================ CSVから印刷用グリッド出力 =======================
 ' パネル（B8:CSVパス, B9:列, B11:飛ばし行数, B12:文字コード, B4:誤り訂正）を使い、
 ' CSVを読み込んで「QR印刷」シートに切れないグリッドで配置＋自動改ページします。
@@ -251,8 +250,6 @@ Public Sub QR_MakeGridFromCSV()
     Const GAP As Long = 2               ' QR同士のすき間（セル）
     Const QUIET As Long = 4             ' QRの白余白（モジュール）
     Const MARGIN_CM As Double = 1#      ' 印刷余白(cm)
-    Const LABEL_COL1 As Long = 7        ' QRの下 1行目に表示する列（G列＝7）。0で非表示
-    Const LABEL_COL2 As Long = 13       ' QRの下 2行目に表示する列（M列＝13）。0で非表示
 
     Dim ws As Worksheet
     On Error Resume Next
@@ -288,13 +285,13 @@ Public Sub QR_MakeGridFromCSV()
     Application.ScreenUpdating = False
     Application.StatusBar = "QRコードを生成中..."
 
-    ' 1) 全QR生成＋最大サイズ（＋ QRの下に出す G/M 列の文字も収集）
+    ' 1) 全QR生成＋最大サイズ
     Dim mats() As Variant: ReDim mats(1 To nLines)
-    Dim g1s() As String: ReDim g1s(1 To nLines)   ' 下段1行目（G列）
-    Dim g2s() As String: ReDim g2s(1 To nLines)   ' 下段2行目（M列）
+    Dim texts() As String: ReDim texts(1 To nLines)
+    Dim g1s() As String: ReDim g1s(1 To nLines)   ' QRの下1行目（G列）
+    Dim g2s() As String: ReDim g2s(1 To nLines)   ' QRの下2行目（M列）
     Dim cnt As Long: cnt = 0
     Dim maxSize As Long: maxSize = 0
-    Dim maxLabelLen As Long: maxLabelLen = 1
     Dim i As Long
     For i = skipRows To nLines - 1
         If Len(Trim$(lines(i))) > 0 Then
@@ -305,14 +302,9 @@ Public Sub QR_MakeGridFromCSV()
             If Len(content) > 0 Then
                 cnt = cnt + 1
                 mats(cnt) = QR_Generate(content, ecc)
-                If LABEL_COL1 >= 1 Then
-                    If LABEL_COL1 - 1 <= UBound(fields) Then g1s(cnt) = fields(LABEL_COL1 - 1)
-                End If
-                If LABEL_COL2 >= 1 Then
-                    If LABEL_COL2 - 1 <= UBound(fields) Then g2s(cnt) = fields(LABEL_COL2 - 1)
-                End If
-                If Len(g1s(cnt)) > maxLabelLen Then maxLabelLen = Len(g1s(cnt))
-                If Len(g2s(cnt)) > maxLabelLen Then maxLabelLen = Len(g2s(cnt))
+                texts(cnt) = content
+                If 6 <= UBound(fields) Then g1s(cnt) = fields(6)    ' G列(7列目)
+                If 12 <= UBound(fields) Then g2s(cnt) = fields(12)  ' M列(13列目)
                 Dim sz As Long: sz = UBound(mats(cnt), 1) + 1
                 If sz > maxSize Then maxSize = sz
             End If
@@ -323,16 +315,10 @@ Public Sub QR_MakeGridFromCSV()
         MsgBox "QR化できるデータがありませんでした（列・飛ばし行数・文字コードを確認）。", vbExclamation: Exit Sub
     End If
 
-    ' 2) 均一グリッド＋改ページ（QRの下にラベル2行ぶんを確保）
+    ' 2) 均一グリッド＋改ページ
     Dim blockDim As Long: blockDim = maxSize + 2 * QUIET
     Dim blockCols As Long: blockCols = blockDim + GAP
     Dim blockRows As Long: blockRows = blockDim + 2 + GAP
-
-    ' ラベル用フォント：QRの幅（blockDim 列ぶん≒ blockDim*2.14 文字）に収まる大きさに自動調整
-    Dim labelFont As Double: labelFont = 11
-    Dim fitFont As Double: fitFont = 11# * (blockDim * 2.14) / maxLabelLen
-    If fitFont < labelFont Then labelFont = fitFont
-    If labelFont < 4 Then labelFont = 4
 
     Dim outWs As Worksheet: Set outWs = FreshSheet("QR印刷")
     Dim totalCols As Long: totalCols = COLS_PER_ROW * blockCols
@@ -343,13 +329,10 @@ Public Sub QR_MakeGridFromCSV()
         gy = (k - 1) \ COLS_PER_ROW
         topRow = 1 + gy * blockRows
         leftCol = 1 + gx * blockCols
-        ' QRをブロック内で中央に描画
-        Dim qrW As Long: qrW = (UBound(mats(k), 1) + 1) + 2 * QUIET
-        Dim qrOff As Long: qrOff = (blockDim - qrW) \ 2
-        RenderQRToCells outWs, topRow, leftCol + qrOff, mats(k), QUIET
-        ' QRの下に G列→M列 を、ブロック幅で中央そろえ表示
-        PlaceLabel outWs, topRow + blockDim, leftCol, blockDim, g1s(k), labelFont
-        PlaceLabel outWs, topRow + blockDim + 1, leftCol, blockDim, g2s(k), labelFont
+        RenderQRToCells outWs, topRow, leftCol, mats(k), QUIET
+        outWs.Cells(topRow + blockDim, leftCol).Value = g1s(k)
+        outWs.Cells(topRow + blockDim + 1, leftCol).Value = g2s(k)
+        outWs.Range(outWs.Cells(topRow + blockDim, leftCol), outWs.Cells(topRow + blockDim + 1, leftCol + blockDim - 1)).HorizontalAlignment = xlCenterAcrossSelection
     Next k
     outWs.Range(outWs.Cells(1, 1), outWs.Cells(1, totalCols)).EntireColumn.ColumnWidth = 2.14
 
@@ -434,17 +417,6 @@ End Sub
 
 Private Sub ColorRun(ws As Worksheet, ByVal r As Long, ByVal c1 As Long, ByVal c2 As Long)
     ws.Range(ws.Cells(r, c1), ws.Cells(r, c2)).Interior.Color = RGB(0, 0, 0)
-End Sub
-
-' 文字を、指定セルから widthCells 列ぶんの幅に「セルを結合せず中央そろえ」で表示
-Private Sub PlaceLabel(ws As Worksheet, ByVal r As Long, ByVal c1 As Long, _
-                       ByVal widthCells As Long, ByVal text As String, ByVal fontSize As Double)
-    If Len(text) = 0 Then Exit Sub
-    ws.Cells(r, c1).Value = text
-    With ws.Range(ws.Cells(r, c1), ws.Cells(r, c1 + widthCells - 1))
-        .HorizontalAlignment = xlCenterAcrossSelection
-        .Font.Size = fontSize
-    End With
 End Sub
 
 '============================ CSV / ファイル読込 ==============================
